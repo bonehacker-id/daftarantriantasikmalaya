@@ -63,6 +63,44 @@
         50% { opacity: 0.5; }
     }
 
+    /* --- CUSTOM RULES STYLES --- */
+    .bg-red-600-custom { background-color: #dc2626 !important; color: #ffffff !important; }
+    .text-yellow-200-custom { color: #fef08a !important; }
+    
+    .break-separator {
+        background-color: #450a0a !important;
+        color: #ffffff !important;
+        text-align: center;
+        font-weight: 800;
+        letter-spacing: 0.15em;
+        font-size: 0.85rem;
+    }
+
+    @keyframes fade-in-out {
+        0%, 100% { opacity: 0.2; }
+        50% { opacity: 1; }
+    }
+    
+    .animate-fade {
+        animation: fade-in-out 2s ease-in-out infinite;
+    }
+
+    .badge-istirahat-wrapper {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 1.5rem;
+    }
+
+    .badge-istirahat {
+        background-color: #dc2626;
+        color: white;
+        padding: 0.5rem 1.5rem;
+        border-radius: 999px;
+        font-size: 1rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        box-shadow: 0 4px 15px rgba(220, 38, 38, 0.4);
+    }
   </style>
 </head>
 <body class="min-h-screen text-sm">
@@ -72,6 +110,9 @@
         <h1 class="text-4xl font-bold" style="color: var(--text-primary);">Antrian Pasien</h1>
         <p class="mt-2 text-lg" style="color: var(--text-secondary);">Bone Hacker Live Status - Cabang Tasikmalaya</p>
     </header>
+
+    <!-- Kontainer Badge Istirahat -->
+    <div id="restNoticeContainer" class="badge-istirahat-wrapper hidden"></div>
 
     <section class="mb-6 p-5 rounded-2xl shadow-sm text-sm" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
         <h3 class="font-bold text-base mb-3" style="color: var(--text-primary);">Informasi Penting</h3>
@@ -83,10 +124,10 @@
     </section>
 
     <section id="summaryContainer" class="mb-6 rounded-2xl shadow-sm p-5" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-        </section>
+    </section>
 
     <main id="patientListContainer" class="rounded-2xl shadow-sm p-5" style="background-color: var(--bg-card); border: 1px solid var(--border-color); min-height: 150px;">
-        </main>
+    </main>
 
     <footer class="text-center mt-8 text-xs" style="color: var(--text-secondary);">
       <p>Terakhir diperbarui: <span id="lastUpdated" class="font-semibold">-</span></p>
@@ -131,13 +172,14 @@
         const summaryContainer = document.getElementById('summaryContainer');
         const listContainer = document.getElementById('patientListContainer');
         
-        summaryContainer.innerHTML = createSummaryHTML(null, true); // Tampilkan skeleton loader untuk ringkasan
+        summaryContainer.innerHTML = createSummaryHTML(null, true); 
         listContainer.innerHTML = `<p style="color: var(--text-secondary);">Memuat daftar antrian...</p>`;
     }
 
     function updateUI(patients, isError = false) {
         const summaryContainer = document.getElementById('summaryContainer');
         const listContainer = document.getElementById('patientListContainer');
+        const restNoticeContainer = document.getElementById('restNoticeContainer');
 
         if (isError) {
             summaryContainer.innerHTML = `<h3 class="text-base font-semibold mb-3">Ringkasan Antrian</h3><p class="text-red-500 font-semibold">Gagal memuat ringkasan.</p>`;
@@ -146,16 +188,33 @@
         }
         
         const safePatients = patients || [];
-        const waiting = safePatients.filter(p => p.status === STATUS.WAITING).length;
-        const treating = safePatients.filter(p => p.status === STATUS.IN_TREATMENT).length;
-        const completed = safePatients.filter(p => p.status === STATUS.COMPLETED).length;
+
+        // 1. LOGIKA ISTIRAHAT
+        const restEntry = safePatients.find(p => p.patientName.toLowerCase().includes('istirahat'));
+        
+        if (restEntry) {
+            let timeStr = restEntry.patientName.toLowerCase().replace('istirahat', '').replace(/[()]/g, '').trim();
+            let displayStr = timeStr ? `ISTIRAHAT S.D. ${timeStr}` : 'ISTIRAHAT';
+            restNoticeContainer.innerHTML = `<span class="badge-istirahat animate-fade">${displayStr}</span>`;
+            restNoticeContainer.classList.remove('hidden');
+        } else {
+            restNoticeContainer.innerHTML = '';
+            restNoticeContainer.classList.add('hidden');
+        }
+
+        // 2. FILTER PASIEN AKTIF
+        const activePatients = safePatients.filter(p => !p.patientName.toLowerCase().includes('istirahat'));
+
+        const waiting = activePatients.filter(p => p.status === STATUS.WAITING).length;
+        const treating = activePatients.filter(p => p.status === STATUS.IN_TREATMENT).length;
+        const completed = activePatients.filter(p => p.status === STATUS.COMPLETED).length;
         
         summaryContainer.innerHTML = createSummaryHTML({ waiting, treating, completed });
 
-        if (safePatients.length === 0) {
+        if (activePatients.length === 0) {
             listContainer.innerHTML = `<p style="color: var(--text-secondary);">Belum ada antrian untuk hari ini.</p>`;
         } else {
-            listContainer.innerHTML = createPatientTable(safePatients);
+            listContainer.innerHTML = createPatientTable(activePatients);
         }
     }
 
@@ -203,14 +262,33 @@
                         </tr>
                     </thead>
                     <tbody>
-                        ${sorted.map(p => `
-                            <tr class="border-b" style="border-color: var(--bg-subtle);">
-                                <td class="p-2 pl-0 font-semibold">${sanitize(p.waitingNumber)}</td>
-                                <td class="p-2">${sanitize(p.patientName)}</td>
-                                <td class="p-2 font-semibold status-${p.status}">${translateStatus(p.status)}</td>
-                                <td class="p-2 pr-0 text-center font-semibold">${p.status === STATUS.WAITING ? sanitize(p.queuePosition) : '-'}</td>
+                        ${sorted.map(p => {
+                            // 3. LOGIKA DASH (-) DAN AT (@)
+                            const hasDash = p.patientName.includes('-');
+                            const hasAt = p.patientName.includes('@');
+                            
+                            let displayName = p.patientName.replace('-', '').replace('@', '').trim();
+                            
+                            const separator = hasAt ? `
+                                <tr class="break-separator">
+                                    <td colspan="4" class="p-2 py-3">↓ SETELAH ISTIRAHAT ↓</td>
+                                </tr>
+                            ` : '';
+
+                            const rowClass = hasDash ? 'bg-red-600-custom' : '';
+                            const statusClass = hasDash ? 'text-white' : `status-${p.status}`;
+                            const queueClass = hasDash ? 'text-yellow-200-custom' : '';
+
+                            return `
+                            ${separator}
+                            <tr class="border-b ${rowClass}" style="${hasDash ? '' : 'border-color: var(--bg-subtle);'}">
+                                <td class="p-2 pl-0 font-semibold ${hasDash ? 'pl-2' : ''}">${sanitize(p.waitingNumber)}</td>
+                                <td class="p-2">${sanitize(displayName)}</td>
+                                <td class="p-2 font-semibold ${statusClass}">${translateStatus(p.status)}</td>
+                                <td class="p-2 pr-0 text-center font-semibold ${queueClass} ${hasDash ? 'pr-2' : ''}">${p.status === STATUS.WAITING ? sanitize(p.queuePosition) : '-'}</td>
                             </tr>
-                        `).join('')}
+                            `;
+                        }).join('')}
                     </tbody>
                 </table>
             </div>
@@ -220,7 +298,7 @@
     // --- UTILITAS ---
     function setupDarkMode() {
         const hour = new Date().getHours();
-        const isNight = hour >= 18 || hour < 6; // Otomatis mode gelap dari jam 6 sore sampai 6 pagi
+        const isNight = hour >= 18 || hour < 6; 
         if (isNight) {
             document.documentElement.classList.add('dark');
         }
@@ -240,4 +318,3 @@
   </script>
 </body>
 </html>
-
